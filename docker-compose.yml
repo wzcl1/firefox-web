@@ -1,0 +1,31 @@
+services:
+  firefox-web:
+    build: .
+    container_name: firefox-web
+    ports:
+      - "127.0.0.1:6901:6901"
+    environment:
+      BROWSER_USER: browser
+      VNC_PASSWORD: change-me
+      FIREFOX_START_URL: about:blank
+      FREEZE_ON_DISCONNECT: "true"
+      RESOLUTION: 1280x1024
+    shm_size: "2gb"
+    mem_limit: "4gb"
+    restart: unless-stopped
+    # Security: drop all Linux capabilities. Unlike the RDP variant, nothing
+    # needs restoring — Xvnc binds an unprivileged port (6901) and runs
+    # fully as the unprivileged user (no SETUID helpers, no root sesman).
+    cap_drop:
+      - ALL
+    # Writable rootfs required: entrypoint writes to /home/$user (profile
+    # init, .vnc config, TLS cert). /tmp, /var, /run are bounded tmpfs.
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+      - /var:size=128m,mode=0755
+      - /run:size=64m,mode=0755
+    volumes:
+      - firefox-profile:/home/browser
+
+volumes:
+  firefox-profile:

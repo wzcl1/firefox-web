@@ -1,0 +1,25 @@
+# KasmVNC per-user config template for firefox-web.
+# Rendered by entrypoint.sh into ~/.vnc/kasmvnc.yaml via plain sed substitution
+# of the __PLACEHOLDERS__ below (no gettext/envsubst dependency).
+network:
+  interface: 0.0.0.0
+  protocol: http
+  websocket_port: __VNC_PORT__
+  use_ipv4: true
+  use_ipv6: true
+  ssl:
+    require_ssl: true
+    pem_certificate: __CERT_PEM__
+    pem_key: __CERT_KEY__
+desktop:
+  resolution:
+    width: __WIDTH__
+    height: __HEIGHT__
+  allow_resize: true
+server:
+  advanced:
+    kasm_password_file: __PASSWD_FILE__
+# Never prompt to choose a desktop environment: the session is defined by our
+# own ~/.vnc/xstartup (see entrypoint.sh), not by select-de.sh.
+command_line:
+  prompt: false
