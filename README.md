@@ -34,6 +34,8 @@ Open in your browser:
 | Password   | `change-me`            |
 
 > Your browser will warn about the self-signed certificate (generated on first start and persisted in the profile volume). Accept it to continue. Safari is not supported for direct KasmVNC connections (it can't pass Basic Auth over WebSockets); use Chrome, Edge, or Firefox.
+>
+> **iOS:** the default web UI (KasmVNC 1.5.0) requires the WebCodecs API at startup. Chrome on iOS works; **Firefox on iOS does not** (Apple mandates WebKit and Mozilla's iOS build exposes no `VideoDecoder`), failing with "noVNC encountered an error". On Firefox iOS use the classic client instead: `https://<host>:6901/vnc.html` (same login).
 
 ## Features
 
