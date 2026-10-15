@@ -3,7 +3,11 @@ services:
     build: .
     container_name: firefox-web
     ports:
-      - "127.0.0.1:6901:6901"
+      # Listen on all interfaces so Tailnet IPs can connect directly with
+      # end-to-end TLS + WebSocket (no L7 proxy in the middle to break the
+      # desktop stream). Re-add the 127.0.0.1 prefix to restrict to localhost
+      # and use `ssh -L 6901:localhost:6901` instead.
+      - "6901:6901"
     environment:
       BROWSER_USER: browser
       VNC_PASSWORD: change-me
