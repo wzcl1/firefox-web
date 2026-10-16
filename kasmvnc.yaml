@@ -31,15 +31,6 @@ server:
     no_user_session_timeout: never
     active_user_session_timeout: never
     inactive_user_session_timeout: never
-encoding:
-  # React faster to video: default Kasm waits 5s of 45%-screen change before
-  # switching to video encoding mode. 2s / 30% makes YouTube etc. smooth
-  # sooner without hurting static-page sharpness much.
-  max_frame_rate: 60
-  video_encoding_mode:
-    enter_video_encoding_mode:
-      time_threshold: 2
-      area_threshold: 30%
 # Never prompt to choose a desktop environment: the session is defined by our
 # own ~/.vnc/xstartup (see entrypoint.sh), not by select-de.sh.
 command_line:

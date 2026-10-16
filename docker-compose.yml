@@ -20,10 +20,6 @@ services:
       # a trusted network (Tailscale/SSH/VPN, localhost-bound port) — anyone
       # who can reach :6901 gets the browser with no password.
       DISABLE_VNC_AUTH: "false"
-      # Software video decode (H.264/AAC via system ffmpeg + OpenH264).
-      # Video is silent — KasmVNC open-source cannot forward audio.
-      # Set to "false" to restore the previous lowest-CPU, no-video profile.
-      ENABLE_VIDEO: "true"
       RESOLUTION: 1280x1024
     shm_size: "2gb"
     mem_limit: "4gb"
