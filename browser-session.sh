@@ -21,6 +21,18 @@ export MOZ_GLX_TEST=0
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 
+# Dummy audio sink so <video> with an audio track plays instead of stalling
+# on "no audio device". KasmVNC open-source cannot forward audio to your
+# browser tab, so playback is silent — the sink just keeps Firefox's media
+# pipeline happy. Best-effort: continue without audio if pulse fails.
+if [ "${ENABLE_VIDEO:-true}" = "true" ]; then
+    if command -v pulseaudio >/dev/null 2>&1; then
+        pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+        pactl load-module module-null-sink sink_name=dummy >/dev/null 2>&1 || true
+        pactl set-default-sink dummy >/dev/null 2>&1 || true
+    fi
+fi
+
 dbus-daemon --session 2>&1 &
 dbus_pid="$!"
 sleep 0.2
@@ -90,6 +102,29 @@ _FIREFOX_CACHE_KB=$((FIREFOX_CACHE_MB * 1024))
 
 echo "[browser-session] Memory: ~${_mem_mb}MB | processes: $FIREFOX_PROCESSES | cache: ${FIREFOX_CACHE_MB}MB" >&2
 
+# Video playback (YouTube etc.) needs system-ffmpeg software decode in the
+# RDD process + the OpenH264 GMP for WebRTC/H.264. Both were previously
+# disabled for CPU savings, which made most <video> show "format not
+# supported". ENABLE_VIDEO=true (default) turns them back on; software
+# decode costs CPU while video plays, idle tabs cost nothing extra.
+# NOTE: no GPU in container, so hardware decode stays off; audio plays
+# into a dummy sink (KasmVNC OSS has no audio forwarding → silent video).
+if [ "${ENABLE_VIDEO:-true}" = "true" ]; then
+    _FFMPEG_ENABLED=true
+    _RDD_ENABLED=true
+    _OPENH264_ENABLED=true
+    _OPENH264_URL="https://aus5.mozilla.org/update/6/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml"
+    _AUTOPLAY_DEFAULT=1
+    echo "[browser-session] Video playback: enabled (software ffmpeg + OpenH264, silent — no audio forwarding)" >&2
+else
+    _FFMPEG_ENABLED=false
+    _RDD_ENABLED=false
+    _OPENH264_ENABLED=false
+    _OPENH264_URL=""
+    _AUTOPLAY_DEFAULT=5
+    echo "[browser-session] Video playback: disabled (ENABLE_VIDEO=false)" >&2
+fi
+
 # Always write/overwrite user.js so pref changes take effect on update
 mkdir -p "$PROFILE_DIR"
 cat > "$PROFILE_DIR/user.js" << EOF
@@ -97,11 +132,15 @@ cat > "$PROFILE_DIR/user.js" << EOF
 user_pref("gfx.webrender.enabled", false);
 user_pref("media.hardware-video-decoding.enabled", false);
 user_pref("media.ffmpeg.vaapi.enabled", false);
+user_pref("media.ffmpeg.enabled", ${_FFMPEG_ENABLED});
+user_pref("media.ffvpx.enabled", ${_FFMPEG_ENABLED});
+user_pref("media.rdd-ffmpeg.enabled", ${_FFMPEG_ENABLED});
+user_pref("media.rdd-vpx.enabled", ${_FFMPEG_ENABLED});
 user_pref("webgl.disabled", true);
 user_pref("layers.acceleration.disabled", true);
 user_pref("dom.ipc.processCount", ${FIREFOX_PROCESSES});
 user_pref("dom.ipc.processCount.webIsolated", 1);
-user_pref("media.rdd-process.enabled", false);
+user_pref("media.rdd-process.enabled", ${_RDD_ENABLED});
 user_pref("browser.sessionhistory.max_entries", 10);
 user_pref("browser.sessionstore.interval", 30000);
 user_pref("browser.sessionstore.max_tabs_undo", 0);
@@ -138,9 +177,9 @@ user_pref("accessibility.force_disabled", 1);
 user_pref("browser.tabs.unloadOnLowMemory", true);
 user_pref("browser.low_commit_space_threshold_mb", 256);
 user_pref("app.update.enabled", false);
-user_pref("media.autoplay.default", 5);
-user_pref("media.gmp-gmpopenh264.enabled", false);
-user_pref("media.gmp-manager.url", "");
+user_pref("media.autoplay.default", ${_AUTOPLAY_DEFAULT});
+user_pref("media.gmp-gmpopenh264.enabled", ${_OPENH264_ENABLED});
+user_pref("media.gmp-manager.url", "${_OPENH264_URL}");
 user_pref("media.video_stats.enabled", false);
 user_pref("javascript.options.asmjs", true);
 user_pref("javascript.options.baselinejit.threshold", 100);
@@ -182,6 +221,7 @@ cleanup() {
     pkill -CONT -f "firefox" 2>/dev/null || true
     kill "$dbus_pid" >/dev/null 2>&1 || true
     kill "$wm_pid" >/dev/null 2>&1 || true
+    pulseaudio --kill >/dev/null 2>&1 || true
     wait "$dbus_pid" 2>/dev/null || true
     wait "$wm_pid" 2>/dev/null || true
 }

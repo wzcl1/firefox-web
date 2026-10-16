@@ -15,14 +15,25 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FIREFOX_START_URL=about:blank \
     FIREFOX_ARGS="" \
     FREEZE_ON_DISCONNECT=true \
+    DISCONNECT_GRACE_SECONDS=20 \
+    DISABLE_VNC_AUTH=false \
+    ENABLE_VIDEO=true \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
 # Layer 1: system packages + KasmVNC (rarely changes)
+# ffmpeg: system libavcodec/libavformat Firefox dlopens for H.264/AAC
+#   playback (Mozilla builds don't bundle patented codecs). ~100MB but
+#   required for YouTube/video sites; disable with ENABLE_VIDEO=false
+#   (still installed — Firefox just won't use it without the prefs).
+# pulseaudio: daemon for a dummy audio sink so pages with audio don't
+#   stall/error with no audio device. NOTE: KasmVNC open-source has no
+#   audio forwarding, so video plays silent in the browser tab.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         dbus-x11 \
+        ffmpeg \
         fonts-dejavu \
         fonts-liberation \
         libasound2 \
@@ -34,6 +45,7 @@ RUN apt-get update \
         openbox \
         openssl \
         procps \
+        pulseaudio \
         pulseaudio-utils \
         tini \
         wget \

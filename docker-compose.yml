@@ -13,6 +13,17 @@ services:
       VNC_PASSWORD: change-me
       FIREFOX_START_URL: about:blank
       FREEZE_ON_DISCONNECT: "true"
+      # Grace period before Firefox is frozen after the last tab disconnects.
+      # Prevents a freeze on every brief mobile app-switch (default 20s).
+      DISCONNECT_GRACE_SECONDS: "20"
+      # Set to "true" to disable the kasm_user login entirely. Only safe on
+      # a trusted network (Tailscale/SSH/VPN, localhost-bound port) — anyone
+      # who can reach :6901 gets the browser with no password.
+      DISABLE_VNC_AUTH: "false"
+      # Software video decode (H.264/AAC via system ffmpeg + OpenH264).
+      # Video is silent — KasmVNC open-source cannot forward audio.
+      # Set to "false" to restore the previous lowest-CPU, no-video profile.
+      ENABLE_VIDEO: "true"
       RESOLUTION: 1280x1024
     shm_size: "2gb"
     mem_limit: "4gb"

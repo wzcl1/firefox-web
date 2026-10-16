@@ -36,9 +36,22 @@ fi
 export HOME="${HOME:-/home/$(id -un)}"
 export USER="$(id -un)"
 
-if [ -z "${VNC_PASSWORD:-}" ]; then
-    echo "ERROR: VNC_PASSWORD must be set" >&2
+if [ -z "${VNC_PASSWORD:-}" ] && [ "${DISABLE_VNC_AUTH:-false}" != "true" ]; then
+    echo "ERROR: VNC_PASSWORD must be set (or set DISABLE_VNC_AUTH=true on a trusted network/VPN only)" >&2
     exit 1
+fi
+
+# Optional no-auth mode for trusted networks (e.g. Tailscale-only access):
+# mobile browsers cache HTTP Basic Auth per-tab and often drop it when the
+# app is backgrounded, forcing a re-login on every return. Disabling Kasm
+# Basic Auth removes all logins entirely. WARNING: anyone who can reach
+# port 6901 gets full browser access — only use behind Tailscale/SSH/VPN
+# with the port bound to localhost or a private interface.
+DISABLE_VNC_AUTH="${DISABLE_VNC_AUTH:-false}"
+EXTRA_VNCSERVER_ARGS=""
+if [ "$DISABLE_VNC_AUTH" = "true" ]; then
+    echo "[entrypoint] WARNING: DISABLE_VNC_AUTH=true — Kasm login disabled, anyone with network access can use the browser" >&2
+    EXTRA_VNCSERVER_ARGS="-disableBasicAuth"
 fi
 
 VNC_PORT="${VNC_PORT:-6901}"
@@ -101,15 +114,22 @@ fi
 
 # KasmVNC credentials are separate OS-level users: the web login user is
 # always kasm_user, set non-interactively from VNC_PASSWORD on every start
-# so password changes take effect on container restart.
+# so password changes take effect on container restart. Skipped entirely
+# when DISABLE_VNC_AUTH=true.
 PASSWD_BIN="$(command -v kasmvncpasswd || command -v vncpasswd || true)"
-if [ -z "$PASSWD_BIN" ]; then
-    echo "ERROR: neither kasmvncpasswd nor vncpasswd found" >&2
-    exit 1
+if [ "$DISABLE_VNC_AUTH" = "true" ]; then
+    rm -f "$PASSWD_FILE"
+    touch "$PASSWD_FILE"
+    chmod 600 "$PASSWD_FILE"
+else
+    if [ -z "$PASSWD_BIN" ]; then
+        echo "ERROR: neither kasmvncpasswd nor vncpasswd found" >&2
+        exit 1
+    fi
+    "$PASSWD_BIN" -d -u kasm_user "$PASSWD_FILE" >/dev/null 2>&1 || true
+    printf '%s\n%s\n' "$VNC_PASSWORD" "$VNC_PASSWORD" | "$PASSWD_BIN" -u kasm_user -w -r "$PASSWD_FILE"
+    chmod 600 "$PASSWD_FILE"
 fi
-"$PASSWD_BIN" -d -u kasm_user "$PASSWD_FILE" >/dev/null 2>&1 || true
-printf '%s\n%s\n' "$VNC_PASSWORD" "$VNC_PASSWORD" | "$PASSWD_BIN" -u kasm_user -w -r "$PASSWD_FILE"
-chmod 600 "$PASSWD_FILE"
 
 # Render per-user KasmVNC config from the template.
 sed -e "s|__VNC_PORT__|$VNC_PORT|g" \
@@ -137,10 +157,12 @@ touch "$HOME/.vnc/.de-was-selected"
 /usr/local/bin/web-watchdog.sh &
 
 echo "[entrypoint] starting vncserver :1 (geometry ${WIDTH}x${HEIGHT}, port $VNC_PORT)" >&2
+# shellcheck disable=SC2086
 vncserver :1 \
     -geometry "${WIDTH}x${HEIGHT}" \
     -depth 24 \
     -websocketPort "$VNC_PORT" \
+    $EXTRA_VNCSERVER_ARGS \
     </dev/null
 
 # vncserver daemonizes; supervise Xvnc in the foreground so the container

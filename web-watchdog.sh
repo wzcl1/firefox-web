@@ -2,7 +2,15 @@
 set -eu
 
 FREEZE_ON_DISCONNECT="${FREEZE_ON_DISCONNECT:-true}"
+# How long with zero TCP connections to :6901 before Firefox is frozen.
+# Mobile browsers drop the WebSocket for a few seconds when the app is
+# backgrounded; freezing instantly means every app-switch SIGSTOPs Firefox
+# and the return trip looks like a hang / forces a reload + re-login.
+# Waiting out the flap keeps the session instantly usable on return.
+DISCONNECT_GRACE_SECONDS="${DISCONNECT_GRACE_SECONDS:-20}"
+POLL_INTERVAL=2
 SUSPENDED=0
+DISCONNECTED_SINCE=""
 FF_PIDFILE="/tmp/firefox.pid"
 FF_LOG="/tmp/firefox.log"
 LOG="/tmp/watchdog.log"
@@ -54,6 +62,7 @@ while true; do
 
     if [ "$FREEZE_ON_DISCONNECT" = "true" ]; then
         if ss -tn state established 2>/dev/null | grep -q ':6901 '; then
+            DISCONNECTED_SINCE=""
             if [ "$SUSPENDED" -eq 1 ]; then
                 sleep "$DEBOUNCE"
                 if ss -tn state established 2>/dev/null | grep -q ':6901 '; then
@@ -64,14 +73,21 @@ while true; do
             fi
         else
             if [ "$SUSPENDED" -eq 0 ]; then
-                sleep "$DEBOUNCE"
-                if ! ss -tn state established 2>/dev/null | grep -q ':6901 '; then
-                    echo "$(date) DISCONNECTED -> freeze Firefox" >> "$LOG"
-                    kill -STOP "$FF_PID" 2>/dev/null || true
-                    SUSPENDED=1
+                NOW=$(date +%s)
+                if [ -z "${DISCONNECTED_SINCE:-}" ]; then
+                    DISCONNECTED_SINCE="$NOW"
+                fi
+                ELAPSED=$((NOW - DISCONNECTED_SINCE))
+                if [ "$ELAPSED" -ge "$DISCONNECT_GRACE_SECONDS" ]; then
+                    sleep "$DEBOUNCE"
+                    if ! ss -tn state established 2>/dev/null | grep -q ':6901 '; then
+                        echo "$(date) DISCONNECTED (${ELAPSED}s, grace ${DISCONNECT_GRACE_SECONDS}s) -> freeze Firefox" >> "$LOG"
+                        kill -STOP "$FF_PID" 2>/dev/null || true
+                        SUSPENDED=1
+                    fi
                 fi
             fi
         fi
     fi
-    sleep 2
+    sleep "$POLL_INTERVAL"
 done

@@ -62,6 +62,9 @@ Environment variables in `docker-compose.yml`:
 | `FIREFOX_START_URL` | `about:blank`   | URL opened when the session starts |
 | `FIREFOX_ARGS`      | `""`            | Extra Firefox CLI arguments |
 | `FREEZE_ON_DISCONNECT` | `true`       | Freeze Firefox (SIGSTOP) when no browser tab is connected, to use zero CPU. Set to `false` to keep Firefox running when disconnected. |
+| `DISCONNECT_GRACE_SECONDS` | `20` | Seconds with zero connections before freezing. Prevents a freeze on every brief mobile app-switch (backgrounding drops the WebSocket for a few seconds). Set lower (e.g. `5`) for faster CPU savings, higher (e.g. `60`) for flaky mobile networks. |
+| `DISABLE_VNC_AUTH` | `false` | Set to `true` to disable the `kasm_user` login entirely. Only safe on a trusted network (Tailscale/SSH/VPN with localhost-bound port) — anyone who can reach 6901 gets the browser. Eliminates all mobile re-login prompts. |
+| `ENABLE_VIDEO` | `true` | Software video decode (H.264/AAC via system ffmpeg + OpenH264, dummy audio sink). Video plays **silent** — KasmVNC open-source cannot forward audio. Set to `false` for lowest CPU / no-video behaviour. |
 | `FIREFOX_PROCESSES` | auto-detect     | Override `dom.ipc.processCount` (default: scaled by RAM) |
 | `FIREFOX_CACHE_MB`  | auto-detect     | Override `browser.cache.memory.capacity` in MB (default: scaled by RAM) |
 
@@ -111,7 +114,7 @@ The `user.js` is regenerated on every session start so updates take effect. It c
 
 | Category | Prefs | Reason |
 |----------|-------|--------|
-| **GPU & media** | `gfx.webrender.enabled`, `media.hardware-video-decoding.enabled`, `media.ffmpeg.vaapi.enabled`, `layers.acceleration.disabled`, `webgl.disabled`, `gfx.canvas.accelerated` = all off | No GPU in container. WebRender / hardware video decode / canvas acceleration would either fail or force a CPU fallback path. |
+| **GPU & media** | `gfx.webrender.enabled`, `media.hardware-video-decoding.enabled`, `media.ffmpeg.vaapi.enabled`, `layers.acceleration.disabled`, `webgl.disabled`, `gfx.canvas.accelerated` = all off; software decode via `media.ffmpeg.enabled` / `media.rdd-process.enabled` / OpenH264 GMP = on when `ENABLE_VIDEO=true` | No GPU in container. WebRender / hardware video decode / canvas acceleration would either fail or force a CPU fallback path. Software ffmpeg decode stays on so `<video>` works (silent — no audio forwarding). |
 | **Animation** | `general.smoothScroll` = `false`, `layout.animation.prefers-reduced-motion` = `1`, `image.animation_mode` = `"none"`, `nglayout.initialpaint.delay` = 0, `content.notify.interval` = 100000 | Disables smooth scrolling, CSS animations, and animated GIFs; eliminates initial paint delay and speeds up reflow notifications. |
 | **Image memory** | `image.mem.decode_bytes_at_a_time` = 65536, `image.mem.surfacecache.max_size_kb` = 32768, `image.mem.surfacecache.min_expiration_ms` = 500 | Uses fewer, larger decode chunks; caps decoded image cache; evicts surfaces faster under memory pressure. |
 | **Process model** | `dom.ipc.processCount` scaled by available RAM | Auto-detects memory limit from cgroup v2/v1 or `/proc/meminfo`, using the minimum to avoid overestimation in containers. Sets process count: <1 GB→1, 1–2 GB→2, 2–4 GB→4, 4–8 GB→6, ≥8 GB→8. Override via `FIREFOX_PROCESSES` env var. |
@@ -120,9 +123,9 @@ The `user.js` is regenerated on every session start so updates take effect. It c
 | **Network prediction** | `network.predictor.enabled` = `false`, `network.prefetch-next` = `false`, `network.dns.disablePrefetch` = `true`, `network.dns.disablePrefetchFromHTTPS` = `true`, `network.http.speculative-parallel-limit` = 0, `browser.places.speculativeConnect.enabled` = `false`, `browser.urlbar.speculativeConnect.enabled` = `false` | Kills all background pre-connection / pre-resolution work. |
 | **Connection limits** | `network.http.max-connections` = 48, `network.http.max-persistent-connections-per-server` = 6, `network.dnsCacheEntries` = 256, `network.dnsCacheExpiration` = 3600, `network.dnsCacheExpirationGracePeriod` = 240, `network.ssl_tokens_cache_capacity` = 1000 | Lower total connection count (Firefox default is 6 per server); DNS cached for 1 hour with 4-minute grace; reduced TLS session cache to bound resource usage. |
 | **TLS** | `security.ssl.enable_ocsp_stapling` = `false` | Disables OCSP stapling to avoid extra round-trips and CPU cost per TLS handshake. |
-| **Background services** | `network.captive-portal-service.enabled`, `network.connectivity-service.enabled`, `browser.casting.enabled`, `media.gmp-gmpopenh264.enabled`, `app.update.enabled` = `false`, `extensions.getAddons.cache.enabled`, `lightweightThemes.update.enabled` = `false`, `browser.topsites.contile.enabled` = `false`, `network.process.enabled` = `false`, `media.rdd-process.enabled` = `false`, `dom.ipc.processCount.webIsolated` = 1 | Stops periodic HTTP probes, mDNS cast discovery, OpenH264 download, add-on metadata fetches; disables separate network and remote data decoder processes; caps site-isolation to 1 process. |
+| **Background services** | `network.captive-portal-service.enabled`, `network.connectivity-service.enabled`, `browser.casting.enabled`, `app.update.enabled` = `false`, `extensions.getAddons.cache.enabled`, `lightweightThemes.update.enabled` = `false`, `browser.topsites.contile.enabled` = `false`, `network.process.enabled` = `false`, `dom.ipc.processCount.webIsolated` = 1 | Stops periodic HTTP probes, mDNS cast discovery, add-on metadata fetches; disables separate network process; caps site-isolation to 1 process. OpenH264 GMP is left enabled (when `ENABLE_VIDEO=true`) so H.264 video/WebRTC decode works. |
 | **Tab & memory pressure** | `browser.tabs.unloadOnLowMemory` = `true`, `browser.low_commit_space_threshold_mb` = 256, `browser.pagethumbnails.capturing_disabled` = `true`, `browser.newtabpage.activity-stream.enabled` = `false` | Drops tabs under memory pressure; disables off-screen thumbnail rendering and activity-stream feeds. |
-| **Media & content** | `media.autoplay.default` = 5, `media.video_stats.enabled` = `false`, `gfx.font_rendering.opentype_svg.enabled` = `false`, `javascript.options.asmjs` = `true`, `camera.control.face_detection.enabled` = `false` | Blocks autoplay video decode; removes per-frame and per-glyph CPU overhead from features we don't use. |
+| **Media & content** | `media.autoplay.default` = 1 (block audible autoplay, allow click-to-play; `5` when `ENABLE_VIDEO=false`), `media.video_stats.enabled` = `false`, `gfx.font_rendering.opentype_svg.enabled` = `false`, `javascript.options.asmjs` = `true`, `camera.control.face_detection.enabled` = `false` | Blocks autoplay video decode; removes per-frame and per-glyph CPU overhead from features we don't use. |
 | **UI noise** | `browser.startup.homepage_override.mstone` = `ignore`, `browser.startup.blankWindow` = `false`, `accessibility.force_disabled` = 1, `clipboard.autocopy` = `false` | Suppresses the blank-window flash during startup, the accessibility walker, and Linux selection autocopy. |
 | **Telemetry** | `app.normandy.enabled`, `app.shield.optoutstudies.enabled`, `browser.newtabpage.activity-stream.feeds.telemetry`, `browser.newtabpage.activity-stream.telemetry`, `browser.ping-centre.telemetry`, `toolkit.telemetry.unified`, `datareporting.healthreport.uploadEnabled` = `false`; `toolkit.coverage.opt-out` = `true`; `browser.contentblocking.report.endpoint_url` = `""` | Disables all telemetry, Shield experiments, health reporting, and content-blocking reporting to eliminate background network calls and CPU overhead. |
 
@@ -138,6 +141,7 @@ This behaviour is controlled by the `FREEZE_ON_DISCONNECT` environment variable 
 |-----------|--------|
 | Detection | Polls `ss -tn state established | grep ':6901 '` every 2 seconds |
 | Debounce | 1-second confirmation delay before acting on state change, preventing thrashing from connection flaps |
+| Grace | `DISCONNECT_GRACE_SECONDS` (default 20s) with zero connections before freezing — brief mobile backgrounding never freezes |
 | Freeze | `SIGSTOP` — process suspended by kernel, zero CPU |
 | Thaw | `SIGCONT` — process resumes instantly |
 | Memory | Stays in RAM (not swapped to disk) |
@@ -146,6 +150,42 @@ This behaviour is controlled by the `FREEZE_ON_DISCONNECT` environment variable 
 | Config | `FREEZE_ON_DISCONNECT=true` (default) to freeze, `false` to keep running |
 
 This is transparent to the user — connect, browse, disconnect, reconnect, and your tabs are exactly where you left them.
+
+## Mobile logins
+
+KasmVNC uses HTTP Basic Auth, and mobile browsers cache those credentials
+per-tab — backgrounding the app often drops them, so returning prompts for
+login again. iOS Safari / Firefox-iOS (both WebKit) additionally never send
+Basic Auth on WebSocket connections, so they always ask twice; use Chrome on
+iOS/Android. What this repo does to minimise it:
+
+- Kasm session is `shared` with `idle_timeout: never` — a reconnect from the
+  same phone rejoins the desktop instead of kicking it / prompting takeover.
+- The watchdog waits `DISCONNECT_GRACE_SECONDS` (20s) before freezing, so a
+  quick app-switch never SIGSTOPs Firefox (which previously looked like a
+  hang that invited a reload + second login).
+- Save the password in the phone browser so re-auth is one tap.
+- Don't stack a second login in front (reverse-proxy basic-auth / Authelia):
+  that plus Kasm auth = "login twice" by construction. Use one or the other.
+- Trusted-network escape hatch: `DISABLE_VNC_AUTH=true` (compose) removes the
+  Kasm login entirely — only use behind Tailscale/SSH/VPN.
+
+## Video playback
+
+`ENABLE_VIDEO=true` (default) installs system `ffmpeg` (H.264/AAC codecs the
+Mozilla build dlopens), a `pulseaudio` dummy sink, and enables software
+decode (`media.ffmpeg.enabled`, RDD process, OpenH264 GMP). Kasm video
+encoding mode is tuned to kick in faster (2s / 30% screen change).
+
+Limits to know:
+
+- **Silent.** KasmVNC open-source has no audio forwarding — YouTube etc. play
+  picture-only into a dummy sink. Audio needs Kasm Workspaces (commercial) or
+  a custom FFmpeg/SRS sidecar.
+- Software decode costs CPU while video plays; idle tabs cost nothing extra.
+- Expect ~30fps remote video rather than native 60fps — VNC encodes frames,
+  it doesn't passthrough the stream.
+- `ENABLE_VIDEO=false` restores the previous lowest-CPU, no-video profile.
 
 ## Building from source
 
